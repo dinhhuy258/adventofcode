@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <queue>
@@ -5,6 +6,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#define STARTING_VALVE_NAME "AA"
 
 std::vector<std::string> split(const std::string &str,
                                const std::string &delimeter) {
@@ -38,6 +41,7 @@ public:
 std::vector<Valve *> valves;
 Valve *startValve;
 std::unordered_map<std::string, Valve *> valvesMap;
+std::unordered_map<std::string, int> valvesMapIndices;
 std::unordered_map<std::string, int> shortedPaths;
 
 void updateShortestPath(Valve *valve) {
@@ -92,11 +96,12 @@ void readValves() {
     vs.push_back(
         new Valve(std::string(name), flowRate, split(desValves, ", ")));
     valvesMap[std::string(name)] = vs.back();
-    if (std::string(name) == "AA") {
+    if (std::string(name) == STARTING_VALVE_NAME) {
       startValve = vs.back();
     }
     if (flowRate != 0) {
       valves.push_back(vs.back());
+      valvesMapIndices[vs.back()->getName()] = valves.size() - 1;
     }
   }
   inputFile.close();
@@ -107,163 +112,119 @@ void readValves() {
   }
 }
 
-int countReleasedPressure(Valve *v, std::unordered_set<std::string> &open,
-                          int minutes) {
+void generateAllPaths(Valve *v, int minutes,
+                      std::unordered_set<std::string> &open,
+                      std::string &currentPath,
+                      std::vector<std::string> &paths) {
   if (minutes <= 1) {
-    return 0;
+    return;
   }
 
-  int pressure = 0;
+  open.insert(v->getName());
+  paths.push_back(currentPath);
 
-  for (auto desV : valves) {
-    if (open.find(desV->getName()) != open.end()) {
+  for (auto &dv : valves) {
+    if (open.find(dv->getName()) != open.end()) {
       continue;
     }
 
-    auto path = v->getName() + "-" + desV->getName();
+    auto path = v->getName() + "-" + dv->getName();
     if (shortedPaths.find(path) == shortedPaths.end()) {
       continue;
     }
 
     int cost = shortedPaths[path];
+    if (minutes - cost - 1 <= 0) {
+      continue;
+    }
 
-    open.insert(desV->getName());
+    auto n = dv->getName();
+    open.insert(n);
+    // valve name have only 2 characters
+    currentPath.push_back(n[0]);
+    currentPath.push_back(n[1]);
 
-    pressure = std::max(
-        pressure, desV->getFlowRate() * (minutes - cost - 1) +
-                      countReleasedPressure(desV, open, minutes - cost - 1));
+    generateAllPaths(dv, minutes - cost - 1, open, currentPath, paths);
 
-    // back track
-    open.erase(desV->getName());
+    currentPath.pop_back();
+    currentPath.pop_back();
+
+    open.erase(dv->getName());
   }
 
-  return pressure;
+  open.erase(v->getName());
+}
+
+std::vector<int> getPathMasks(std::vector<std::string> &paths) {
+  std::vector<int> masks;
+  for (auto path : paths) {
+    int mask = 0;
+    // there is no flow in starting valve
+    for (int i = 0; i < path.size(); i += 2) {
+      std::string d = std::string(1, path[i]) + std::string(1, path[i + 1]);
+      mask |= (1 << valvesMapIndices[d]);
+    }
+
+    masks.push_back(mask);
+  }
+
+  return masks;
+}
+
+std::vector<int> getAllReleasedPressures(std::vector<std::string> &paths,
+                                         int maxMinutes) {
+  std::vector<int> pressures;
+  for (auto path : paths) {
+    int pressure = 0;
+    int minutes = maxMinutes;
+    // there is no flow in starting valve
+    std::string v = STARTING_VALVE_NAME;
+    for (int i = 0; i < path.size(); i += 2) {
+      std::string d = std::string(1, path[i]) + std::string(1, path[i + 1]);
+      minutes -= shortedPaths[v + "-" + d];
+      --minutes; // open valve
+      pressure += minutes * valvesMap[d]->getFlowRate();
+      std::swap(v, d);
+    }
+
+    pressures.push_back(pressure);
+  }
+
+  return pressures;
 }
 
 int countReleasedPressure() {
   std::unordered_set<std::string> open;
-  return countReleasedPressure(startValve, open, 30);
-}
+  std::vector<std::string> paths;
+  std::string path = "";
+  int maxMinutes = 30;
+  generateAllPaths(startValve, maxMinutes, open, path, paths);
 
-std::unordered_map<std::string, int> memo;
-int countReleasedPressureWithElephantSupport(
-    Valve *v, Valve *e, std::unordered_set<std::string> &open, int yourMinutes,
-    int elephantMinutes) {
+  auto pressures = getAllReleasedPressures(paths, maxMinutes);
 
-  std::string state = "";
-  for (const auto &vv : valves) {
-    if (open.find(vv->getName()) == open.end()) {
-      state += vv->getName() + "-";
-    }
-  }
-  std::string key = v->getName() + "-" + e->getName() + "-" +
-                    std::to_string(yourMinutes) + "-" +
-                    std::to_string(elephantMinutes) + "-" + state;
-  if (memo.find(key) != memo.end()) {
-    return memo[key];
-  }
-
-  std::vector<Valve *> yourValves;
-  std::vector<Valve *> elephantValves;
-  for (auto &desV : valves) {
-    if (open.find(desV->getName()) != open.end()) {
-      continue;
-    }
-
-    auto yourPath = v->getName() + "-" + desV->getName();
-    if (shortedPaths.find(yourPath) != shortedPaths.end()) {
-      int yourCost = shortedPaths[yourPath];
-      if (yourMinutes - yourCost - 1 > 0) {
-        yourValves.push_back(desV);
-      }
-    }
-
-    auto elephantPath = e->getName() + "-" + desV->getName();
-    if (shortedPaths.find(elephantPath) != shortedPaths.end()) {
-      int elephantCost = shortedPaths[elephantPath];
-      if (elephantMinutes - elephantCost - 1 > 0) {
-        elephantValves.push_back(desV);
-      }
-    }
-  }
-
-  int pressure = 0;
-
-  if (!elephantValves.empty() && !yourValves.empty()) {
-    for (auto yv : yourValves) {
-      auto yourPath = v->getName() + "-" + yv->getName();
-      int yourCost = shortedPaths[yourPath];
-      int yourPressure = yv->getFlowRate() * (yourMinutes - yourCost - 1);
-
-      open.insert(yv->getName());
-      for (auto ev : elephantValves) {
-        if (ev->getName() == yv->getName()) {
-          continue;
-        }
-
-        auto elephantPath = e->getName() + "-" + ev->getName();
-        int elephantCost = shortedPaths[elephantPath];
-        int elephantPressure =
-            ev->getFlowRate() * (elephantMinutes - elephantCost - 1);
-
-        open.insert(ev->getName());
-
-        pressure =
-            std::max(pressure, yourPressure + elephantPressure +
-                                   countReleasedPressureWithElephantSupport(
-                                       yv, ev, open, yourMinutes - yourCost - 1,
-                                       elephantMinutes - elephantCost - 1));
-
-        open.erase(ev->getName());
-      }
-
-      open.erase(yv->getName());
-    }
-  }
-
-  if (yourValves.empty()) {
-    for (auto ev : elephantValves) {
-      auto elephantPath = v->getName() + "-" + ev->getName();
-      int elephantCost = shortedPaths[elephantPath];
-      int elephantPressure =
-          ev->getFlowRate() * (elephantMinutes - elephantCost - 1);
-
-      open.insert(ev->getName());
-
-      pressure = std::max(
-          pressure, elephantPressure + countReleasedPressureWithElephantSupport(
-                                           v, ev, open, yourMinutes,
-                                           elephantMinutes - elephantCost - 1));
-
-      open.erase(ev->getName());
-    }
-  }
-
-  if (elephantValves.empty()) {
-    for (auto yv : yourValves) {
-      open.insert(yv->getName());
-      auto yourPath = v->getName() + "-" + yv->getName();
-      int yourCost = shortedPaths[yourPath];
-      int yourPressure = yv->getFlowRate() * (yourMinutes - yourCost - 1);
-
-      pressure = std::max(
-          pressure, yourPressure + countReleasedPressureWithElephantSupport(
-                                       yv, e, open, yourMinutes - yourCost - 1,
-                                       elephantMinutes));
-
-      open.erase(yv->getName());
-    }
-  }
-
-  memo[key] = pressure;
-
-  return pressure;
+  return *std::max_element(pressures.begin(), pressures.end());
 }
 
 int countReleasedPressureWithElephantSupport() {
   std::unordered_set<std::string> open;
-  return countReleasedPressureWithElephantSupport(startValve, startValve, open,
-                                                  26, 26);
+  std::vector<std::string> paths;
+  std::string path = "";
+  int maxMinutes = 26;
+  generateAllPaths(startValve, maxMinutes, open, path, paths);
+  auto pressures = getAllReleasedPressures(paths, maxMinutes);
+  auto masks = getPathMasks(paths);
+
+  int maxPressure = 0;
+  int pathsSize = paths.size();
+  for (int i = 0; i < pathsSize; ++i) {
+    for (int j = i + 1; j < pathsSize; ++j) {
+      if ((masks[i] & masks[j]) == 0) {
+        maxPressure = std::max(maxPressure, pressures[i] + pressures[j]);
+      }
+    }
+  }
+
+  return maxPressure;
 }
 
 int main() {
@@ -277,6 +238,6 @@ int main() {
   // part 1
   std::cout << countReleasedPressure() << std::endl;
 
-  // part 2 - timeout
+  // part 2
   std::cout << countReleasedPressureWithElephantSupport() << std::endl;
 }
