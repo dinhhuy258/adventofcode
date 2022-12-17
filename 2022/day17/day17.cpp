@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #define TOWNER_WIDE 7
@@ -33,7 +34,9 @@ std::vector<std::vector<int>> rocks{
     },
 };
 
+int rocksIdx;
 std::string jetPatterns;
+int jetPatternsIdx;
 
 void readInput() {
   std::ifstream inputFile("input.txt");
@@ -141,44 +144,94 @@ void moveRight(int y, std::vector<int> &rock, std::vector<int> &tower) {
   }
 }
 
-int calculateTowerTall(int rockCount) {
-  int rocksIdx = 0;
-  int jetPatternsIdx = 0;
-  std::vector<int> tower;
+void simulate(std::vector<int> &tower) {
+  int y = tower.size() + Y_OFFSET;
+  auto rock = rocks[rocksIdx];
+  ++rocksIdx;
+  rocksIdx %= rocks.size();
 
-  while (rockCount > 0) {
-    int y = tower.size() + Y_OFFSET;
-    auto rock = rocks[rocksIdx];
-    ++rocksIdx;
-    rocksIdx %= rocks.size();
+  while (true) {
+    auto &pattern = jetPatterns[jetPatternsIdx];
+    ++jetPatternsIdx;
+    jetPatternsIdx %= jetPatterns.size();
 
-    while (true) {
-      auto &pattern = jetPatterns[jetPatternsIdx];
-      ++jetPatternsIdx;
-      jetPatternsIdx %= jetPatterns.size();
+    if (pattern == '<') {
+      moveLeft(y, rock, tower);
+    } else {
+      moveRight(y, rock, tower);
+    }
 
-      if (pattern == '<') {
-        moveLeft(y, rock, tower);
-      } else {
-        moveRight(y, rock, tower);
+    if (!canFall(y, rock, tower)) {
+      int towerSize = tower.size();
+      for (int i = rock.size() - 1; i >= 0; --i) {
+        int ly = y + (rock.size() - i - 1);
+        if (ly < towerSize) {
+          tower[ly] = tower[ly] | rock[i];
+        } else {
+          tower.push_back(rock[i]);
+        }
       }
 
-      if (!canFall(y, rock, tower)) {
-        int towerSize = tower.size();
-        for (int i = rock.size() - 1; i >= 0; --i) {
-          int ly = y + (rock.size() - i - 1);
-          if (ly < towerSize) {
-            tower[ly] = tower[ly] | rock[i];
-          } else {
-            tower.push_back(rock[i]);
-          }
-        }
+      break;
+    }
 
+    --y;
+  }
+}
+
+std::string getStateKey(std::vector<int> &tower) {
+  std::string state = "";
+  for (int i = 0; i < TOWNER_WIDE; ++i) {
+    int h = Y_OFFSET;
+    for (int j = tower.size() - 1; j >= 0; --j) {
+      if ((tower[j] & (1 << i)) != 0) {
         break;
       }
 
-      --y;
+      ++h;
     }
+
+    state = state + std::to_string(h) + "-";
+  }
+
+  state += std::to_string(rocksIdx);
+  state += "-" + std::to_string(jetPatternsIdx);
+
+  return state;
+}
+
+long calculateTowerTall(long rockCount) {
+  rocksIdx = 0;
+  jetPatternsIdx = 0;
+  std::vector<int> tower;
+  std::unordered_map<std::string, std::pair<int /* tall */, int /* idx */>>
+      states;
+  long idx = 0;
+
+  while (rockCount > 0) {
+    ++idx;
+
+    auto state = getStateKey(tower);
+    // calculate state
+    if (states.find(state) != states.end()) {
+      auto [h, i] = states[state];
+
+      long diffHeight = tower.size() - h + 2;
+      long towerTall = diffHeight * (rockCount / (idx - i)) + tower.size();
+      long remaining = rockCount % (idx - i);
+      long towerSizeBefore = tower.size();
+
+      while (remaining > 0) {
+        simulate(tower);
+        --remaining;
+      }
+
+      return towerTall + tower.size() - towerSizeBefore;
+    }
+
+    simulate(tower);
+
+    states[state] = std::make_pair(tower.size(), idx);
 
     --rockCount;
   }
@@ -192,4 +245,7 @@ int main() {
 
   // part 1
   std::cout << calculateTowerTall(2022) << std::endl;
+
+  // part 2
+  std::cout << calculateTowerTall(1000000000000) << std::endl;
 }
